@@ -1,0 +1,1 @@
+refer blog: https://iotprojectsideas.com/rfid-based-attendance-system-using-nodemcu/
