@@ -1,48 +1,46 @@
 //*******************************libraries********************************
-//RFID-----------------------------
 #include <SPI.h>
 #include <MFRC522.h>
-//NodeMCU--------------------------
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClient.h> // নতুন লাইব্রেরি যুক্ত করা হয়েছে
+#include <WiFiClient.h>
 
 //************************************************************************
-#define SS_PIN  D2  // D2
-#define RST_PIN D1  // D1
-//************************************************************************
-MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance.
+// আপনার ফিক্সড হার্ডওয়্যার অনুযায়ী পিন কনফিগারেশন
+#define RST_PIN 0  // D3
+#define SS_PIN  2  // D4
+#define BUZZER  4  // D2
 //************************************************************************
 
-/* আপনার ওয়াইফাই এবং ডিভাইসের তথ্য এখানে দিন */
+MFRC522 mfrc522(SS_PIN, RST_PIN); 
+
 const char *ssid = "Virus";
 const char *password = "01511689464";
-const char* device_token = "366322a0053aa159";
+const char *device_token = "366322a0053aa159";
 
-//************************************************************************
-String URL = "http://qarfid.punorpath.com/getdata.php"; // HTTPS এর বদলে HTTP ব্যবহার করা নিরাপদ যদি সার্টিফকেট না থাকে
-String getData, Link;
+String URL = "http://qarfid.punorpath.com/getdata.php";
 String OldCardID = "";
 unsigned long previousMillis = 0;
 
-//************************************************************************
 void setup() {
   delay(1000);
   Serial.begin(115200);
-  SPI.begin();      // Init SPI bus
-  mfrc522.PCD_Init(); // Init MFRC522 card
-  //---------------------------------------------
+  SPI.begin();      
+  mfrc522.PCD_Init(); 
+  
+  // বাজার পিন সেটআপ
+  pinMode(BUZZER, OUTPUT);
+  digitalWrite(BUZZER, LOW); 
+
   connectToWiFi();
 }
 
-//************************************************************************
 void loop() {
-  // ওয়াইফাই কানেকশন চেক করা হচ্ছে
   if(WiFi.status() != WL_CONNECTED){
     connectToWiFi();    
   }
   
-  // ১৫ সেকেন্ড পর পর কার্ড মেমোরি ক্লিয়ার করা (একই কার্ড আবার পাঞ্চ করার জন্য)
+  // ১৫ সেকেন্ড পর পর কার্ড মেমোরি ক্লিয়ার করা
   if (millis() - previousMillis >= 15000) {
     previousMillis = millis();
     OldCardID = "";
@@ -50,12 +48,10 @@ void loop() {
   
   delay(50);
   
-  // নতুন কার্ড আছে কি না চেক করা
   if ( ! mfrc522.PICC_IsNewCardPresent()) {
     return;
   }
   
-  // কার্ডের ডাটা রিড করা
   if ( ! mfrc522.PICC_ReadCardSerial()) {
     return;
   }
@@ -65,60 +61,67 @@ void loop() {
     CardID += mfrc522.uid.uidByte[i];
   }
   
-  // একই কার্ড বারবার রিড হওয়া ঠেকানো
   if( CardID == OldCardID ){
     return;
   }
   else{
     OldCardID = CardID;
+    SendCardID(CardID); // ডাটা পাঠানো শুরু
   }
-  
-  // কার্ড আইডি সার্ভারে পাঠানো
-  SendCardID(CardID);
   delay(1000);
 }
 
-//************ সার্ভারে ডাটা পাঠানোর ফাংশন *************
 void SendCardID( String Card_uid ){
   Serial.println("Sending the Card ID...");
   
   if(WiFi.status() == WL_CONNECTED){
-    WiFiClient client; // HTTPClient এর জন্য ক্লায়েন্ট অবজেক্ট
+    WiFiClient client;
     HTTPClient http;
     
-    // URL তৈরি করা
-    getData = "?card_uid=" + String(Card_uid) + "&device_token=" + String(device_token); 
-    Link = URL + getData;
+    String getData = "?card_uid=" + String(Card_uid) + "&device_token=" + String(device_token); 
+    String Link = URL + getData;
     
-    // নতুন API ফরম্যাট: http.begin(client, Link)
     if (http.begin(client, Link)) { 
-      int httpCode = http.GET(); // সার্ভারে রিকোয়েস্ট পাঠানো
-      String payload = http.getString(); // সার্ভার থেকে উত্তর আসা
+      int httpCode = http.GET(); 
+      String payload = http.getString(); 
 
       Serial.print("HTTP Code: ");
       Serial.println(httpCode);
-      Serial.print("Card ID: ");
-      Serial.println(Card_uid);
-      Serial.print("Response: ");
-      Serial.println(payload);
 
-      // রেসপন্স অনুযায়ী কাজ করা
+      // যদি সার্ভারে সফলভাবে ডাটা পৌঁছায় (HTTP Code 200)
       if (httpCode == 200) {
+        Serial.println("Data Sent Successfully!");
+        
+        // সফলভাবে ডাটা পাঠালে বাজার সিগন্যাল (২বার বিপ)
+        digitalWrite(BUZZER, HIGH);
+        delay(150);
+        digitalWrite(BUZZER, LOW);
+        delay(100);
+        digitalWrite(BUZZER, HIGH);
+        delay(150);
+        digitalWrite(BUZZER, LOW);
+
         if (payload.substring(0, 5) == "login") {
-          // সফল লগইন হলে এখানে কোড লিখতে পারেন
+           Serial.println("Status: Login");
         }
         else if (payload.substring(0, 6) == "logout") {
-          // সফল লগআউট হলে এখানে কোড লিখতে পারেন
+           Serial.println("Status: Logout");
         }
+      } 
+      else {
+        // যদি সার্ভারে পাঠাতে ব্যর্থ হয় (একটি লম্বা বিপ)
+        Serial.println("Failed to send data");
+        digitalWrite(BUZZER, HIGH);
+        delay(600);
+        digitalWrite(BUZZER, LOW);
       }
-      http.end(); // কানেকশন শেষ করা
+      http.end(); 
     }
   } else {
     Serial.println("WiFi Disconnected");
   }
 }
 
-//**************** ওয়াইফাই কানেকশন ফাংশন ******************
 void connectToWiFi(){
     WiFi.mode(WIFI_OFF);        
     delay(1000);
@@ -132,9 +135,9 @@ void connectToWiFi(){
       Serial.print(".");
     }
     
-    Serial.println("");
-    Serial.println("Connected Successfully!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP()); 
-    delay(1000);
+    Serial.println("\nConnected Successfully!");
+    // ওয়াইফাই কানেক্ট হলে একটি ছোট বিপ
+    digitalWrite(BUZZER, HIGH);
+    delay(200);
+    digitalWrite(BUZZER, LOW);
 }
